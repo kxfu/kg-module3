@@ -1,0 +1,17 @@
+{
+  "name": "kg-module3",
+  "version": "1.0.0",
+  "description": "Module 3: Knowledge Graph Builder — MCP Server (local, stdio)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
