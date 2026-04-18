@@ -1,39 +1,69 @@
-# Module 3 — Knowledge Graph Builder
+# Module 1 — Legacy Database Discovery
 
-An MCP server (local, stdio) that takes AI-ready, FAIR-validated datasets from
-Module 2 and builds an incrementally-updated knowledge graph using Claude as the
-reasoning engine.
+An MCP server (local, stdio) that searches PubMed for scientific papers,
+extracts references to legacy databases, ranks them using FAIR principles
+and a legacy score, and hands off approved databases to Module 2 for
+harmonization.
+
+---
+
+## What counts as a legacy database
+
+A database must meet **all three** of these criteria to be flagged as legacy:
+
+1. **Pre-relational structure** — flat-file, hierarchical, or network model.
+   Not a modern relational/SQL database.
+2. **No current MCP or API access** — does not have a known REST API, SOAP
+   API, or other modern programmatic data access layer in its current state
+   (checked against 2026 knowledge).
+3. **Old or abandoned** — typically created or primarily used before the
+   relational database era. Dead URLs are logged as abandonment evidence and
+   boost the legacy score.
+
+### Examples of legacy databases
+- Early flat-file sequence archives (pre-INSDC era GenBank flat files)
+- PIR Protein Information Resource (pre-UniProt)
+- NBRF Atlas of Protein Sequence and Structure
+- Hierarchical chemical databases (early CAS flat exports)
+- Abandoned taxonomy flat files (early ITIS text dumps)
+- Pre-web ecology datasets stored as fixed-width text files
+
+### Examples that are NOT legacy
+- Modern GenBank (NCBI E-utilities API)
+- UniProt (REST API)
+- KEGG (API)
+- PDB (REST API)
+- Any PostgreSQL/MySQL database
 
 ---
 
 ## Architecture
 
 ```
-Module 2 output (AI-ready datasets)
+Researcher provides keywords + year cutoff
         │
         ▼
-┌──────────────────────────────────────┐
-│         MCP Server (stdio)           │
-│                                      │
-│  Tool 1: ingest_dataset              │  ◄─ incremental, per dataset
-│    └─ Claude: extract_entities       │
-│    └─ Dedup: embedding similarity    │
-│    └─ Claude: infer_relations        │
-│    └─ Claude: revise_edges           │
-│                                      │
-│  Tool 2: build_graph                 │  ◄─ full pass after bulk ingest
-│    └─ Global dedup pass              │
-│    └─ Claude: full relation sweep    │
-│                                      │
-│  Tool 3: query_graph                 │  ◄─ natural language → Claude
-│                                      │
-│  Tool 4: export_graph                │  ◄─ JSON-LD / Turtle / CSV
-│  Tool 5: get_graph_status            │
-└──────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│           MCP Server (stdio)                     │
+│                                                  │
+│  Tool 1: search_pubmed                           │
+│    └─ PubMed E-utilities API (multiple queries)  │
+│    └─ Claude: extract legacy DB references       │
+│    └─ URL fetch: check if database is alive      │
+│    └─ Claude: MCP/API readiness check            │
+│    └─ Claude: FAIR + legacy scoring              │
+│    └─ Deduplication: Jaccard + URL + accession   │
+│    └─ Registry: persist canonical entries        │
+│                                                  │
+│  Tool 2: get_discovery_log (ranked results)      │
+│  Tool 3: review_databases (threshold + manual)   │
+│  Tool 4: send_to_module2 (approved entries)      │
+│  Tool 5: get_session_status                      │
+└──────────────────────────────────────────────────┘
         │
         ▼
-  data/graph.json  (persisted, versioned)
-  exports/         (JSON-LD, Turtle/RDF, Edge CSV)
+  data/registry.json  (persisted canonical database registry)
+  → Module 2 harmonize_dataset (researcher-approved, then automatic)
 ```
 
 ---
@@ -42,162 +72,194 @@ Module 2 output (AI-ready datasets)
 
 ### Prerequisites
 - Node.js ≥ 18
-- An `ANTHROPIC_API_KEY` environment variable
+- `ANTHROPIC_API_KEY` environment variable
+- Module 2 path configured (optional — needed for full pipeline)
 
 ### Install
 
 ```bash
-cd kg-module3
+cd kg-module1
 npm install
 ```
 
-### Run the server (standalone)
+### Run standalone
 
 ```bash
 ANTHROPIC_API_KEY=sk-... npm start
 ```
 
-### Register with Claude Desktop
+### Run test client
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
-(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+```bash
+ANTHROPIC_API_KEY=sk-... npm test
+```
+
+### Run test client with Module 2 handoff
+
+```bash
+ANTHROPIC_API_KEY=sk-... \
+MODULE2_SERVER_PATH=/absolute/path/to/kg-module2/src/server.js \
+npm run test:with-module2
+```
+
+---
+
+## Register with Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
+    "kg-module1": {
+      "command": "/usr/local/bin/node",
+      "args": ["/absolute/path/to/kg-module1/src/server.js"],
+      "env": {
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "MODULE2_SERVER_PATH": "/absolute/path/to/kg-module2/src/server.js"
+      }
+    },
+    "kg-module2": {
+      "command": "/usr/local/bin/node",
+      "args": ["/absolute/path/to/kg-module2/src/server.js"],
+      "env": {
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "MODULE3_SERVER_PATH": "/absolute/path/to/kg-module3/src/server.js"
+      }
+    },
     "kg-module3": {
-      "command": "node",
+      "command": "/usr/local/bin/node",
       "args": ["/absolute/path/to/kg-module3/src/server.js"],
       "env": {
-        "ANTHROPIC_API_KEY": "sk-..."
+        "ANTHROPIC_API_KEY": "sk-ant-..."
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop. The five tools will appear automatically.
-
 ---
 
 ## Tools
 
-### `ingest_dataset`
-Incrementally ingests one AI-ready dataset. Runs entity extraction, embedding-
-based deduplication, relation inference, and edge revision — all via Claude.
+### `search_pubmed`
 
-**Required fields:**
-| Field | Type | Description |
+Searches PubMed with one or more free-text keyword queries. Results are
+combined with OR, so multiple queries broaden the search. Each paper's
+abstract is analyzed by Claude to identify explicitly named legacy databases.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `queries` | array | required | One or more keyword strings |
+| `max_results` | number | 100 | Papers to retrieve (10–500) |
+| `year_cutoff` | number | none | Only papers published ≤ this year |
+| `dedup_threshold` | number | 0.72 | Similarity threshold for deduplication |
+
+**Processing pipeline per paper:**
+1. Claude extracts explicitly named databases
+2. Each database checked against all three legacy criteria
+3. URL fetched if available — dead URL = abandonment evidence
+4. Claude checks current MCP/API readiness
+5. Databases with confirmed modern APIs are excluded
+6. Claude scores FAIR (F/A/I/R) and legacy (0–1)
+7. Deduplication: Jaccard name similarity + URL domain + accession patterns
+8. Canonical entry written to `data/registry.json`
+
+**Deduplication logic:**
+- When a duplicate is found, the entry from the more recent paper wins
+- All source PMIDs are accumulated on the canonical entry
+- Edges repointed, self-loops removed
+
+---
+
+### `get_discovery_log`
+
+Returns all discovered databases sorted by legacy score (default) or FAIR
+score, name, or year. Includes full metadata: field lists, scoring rationale,
+abandonment evidence, and improvement suggestions.
+
+| Parameter | Default | Description |
 |---|---|---|
-| `name` | string | Dataset name |
-| `domain` | string | Scientific domain |
-| `records` | number | Row count |
-| `fairScore` | number | FAIR compliance score (0–1) |
-
-**Optional:** `fields` (array), `description`, `sourceId`
-
-**Returns:** nodes added, total nodes/edges, full activity log.
+| `sort_by` | `legacy_score` | `legacy_score`, `fair_score`, `name`, `year` |
+| `min_fair_score` | 0 | Filter by minimum FAIR score |
+| `min_legacy_score` | 0 | Filter by minimum legacy score |
 
 ---
 
-### `build_graph`
-Runs a full graph build pass: global deduplication sweep across all nodes,
-followed by a complete relation inference call across the entire node set.
-Use after batching multiple `ingest_dataset` calls.
+### `review_databases`
 
-**Optional:** `dedup_threshold` (default 0.72)
+The researcher review step. Two approval paths:
 
----
+1. **Threshold approval**: set `approve_threshold` (e.g. 0.75) to
+   auto-approve all databases with FAIR score ≥ that value
+2. **Manual approval**: pass specific database IDs in `approve_ids`
 
-### `query_graph`
-Answers a natural-language question using Claude reasoning over the live graph.
+Both can be used together in one call. Approved databases go into the
+pending queue for `send_to_module2`. Use `reject_ids` to remove entries
+from the queue.
 
-```
-Q: What relationships exist between genomic sequences and metabolic pathways?
-A: The graph shows DNA Sequence nodes (from GenBank) connected to Metabolic
-   Pathway nodes (from KEGG) via "encodes" and "maps to" relations...
-```
+The tool always returns the full ranked list so the researcher can see
+everything and decide what else to approve manually.
 
 ---
 
-### `export_graph`
-Exports the graph in one or all formats.
+### `send_to_module2`
 
-| Format | File | Standard |
-|---|---|---|
-| `jsonld` | `exports/knowledge_graph.jsonld` | JSON-LD / Schema.org |
-| `turtle` | `exports/knowledge_graph.ttl` | Turtle / RDF |
-| `csv` | `exports/edges.csv` | Edge list with provenance |
-| `all` | all three | — |
+Sends all approved databases to Module 2's `harmonize_dataset` tool.
+Requires `MODULE2_SERVER_PATH` to be set (in env or passed as parameter).
 
-All node URIs follow `urn:kg:module3:{id}` — structured for future persistent
-identifier assignment (Findability-first FAIR design).
+Each database is sent with:
+- Confirmed explicit fields from the paper
+- Claude-inferred fields tagged as `[inferred]`
+- FAIR score from Module 1 as starting `fairScore`
+- Source identifier as `urn:pubmed:{pmid}` or the database URL
 
----
-
-### `get_graph_status`
-Returns node counts by type, edge count, average FAIR score, ingested dataset
-list, graph version, and last-updated timestamp.
+After a successful send, the database is marked `sentToModule2: true` in
+the registry and removed from the pending queue.
 
 ---
 
-## Deduplication
+### `get_session_status`
 
-Deduplication uses **Jaccard token similarity** over normalised node names as an
-embedding proxy (no external embedding endpoint required). The default threshold
-is **0.72** — tunable per `build_graph` call.
-
-When a duplicate is detected:
-- The node with the **higher FAIR score** is kept
-- Edges referencing the removed node are **repointed** to the surviving node
-- Self-loops introduced by merging are removed
-- Duplicate edges (same from/to/label) are collapsed
-
-This mirrors the deduplication design intended for Module 1, so the threshold
-and merge strategy can be shared when Module 1 is built.
+Returns registry size, approval counts, domain breakdown, FAIR/legacy score
+summaries, abandoned URL count, search history, and the last 20 log entries.
 
 ---
 
-## Graph persistence
+## FAIR scoring
 
-The graph is stored at `data/graph.json` and versioned on every write. Each
-build increments `meta.version`. The file survives server restarts — re-ingesting
-the same dataset will update the existing node rather than duplicate it.
+Each database is scored across all four pillars equally (0.25 weight each):
 
----
-
-## Testing
-
-```bash
-ANTHROPIC_API_KEY=sk-... node src/test_client.js
-```
-
-This spawns the server as a child process and exercises all five tools
-end-to-end with three real datasets (GenBank, KEGG, UniProt).
-
----
-
-## FAIR alignment
-
-| Pillar | Implementation |
+| Pillar | What is scored |
 |---|---|
-| **Findability** | Every node carries a `urn:kg:module3:{id}` URI. JSON-LD export uses `@id`. Dataset nodes store upstream `sourceId`. |
-| **Accessibility** | JSON-LD and Turtle exports are machine-readable standard formats. |
-| **Interoperability** | Turtle export uses `rdfs:label`, `schema:about`, `schema:dateCreated`. |
-| **Reusability** | Every edge carries `source` (dataset name), `rationale`, and `confidence`. |
+| Findability | Persistent name, consistent citation, findable today |
+| Accessibility | Reachable URL, programmatic access, not paywalled |
+| Interoperability | Standard formats, vocabulary alignment |
+| Reusability | License, provenance, description quality |
+
+**Legacy score** (separate from FAIR, 0–1): measures how strongly a database
+qualifies as legacy. Dead URL, no API, sparse metadata, and pre-relational
+structure all contribute to a higher legacy score. Used for ranking — the
+most abandoned databases appear first.
 
 ---
 
-## Connecting to Module 1 & 2
+## Persistence
 
-Module 3 is designed to be the terminal consumer in the pipeline:
+The registry is stored in `data/registry.json` and persists across server
+restarts. Re-discovering the same database in a later search updates the
+entry only if the new paper is more recent.
+
+---
+
+## Full pipeline
 
 ```
-Module 1 → discovers + ranks legacy databases (FAIR scoring, dedup)
+Module 1 → discovers + ranks legacy databases    ← this module
+    ↓ (researcher approves, then automatic)
 Module 2 → harmonizes raw data → AI-ready datasets
-Module 3 → builds knowledge graph from AI-ready datasets  ← this module
+    ↓ (automatic)
+Module 3 → builds knowledge graph
 ```
-
-The `ingest_dataset` tool accepts the same fields Module 2 would produce.
-When Modules 1 and 2 are built, they can call `ingest_dataset` directly via
-MCP tool calls, making the pipeline fully agentic.

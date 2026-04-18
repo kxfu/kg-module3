@@ -1,12 +1,14 @@
 {
-  "name": "kg-module3",
+  "name": "kg-module1",
   "version": "1.0.0",
-  "description": "Module 3: Knowledge Graph Builder — MCP Server (local, stdio)",
+  "description": "Module 1: Legacy Database Discovery — MCP Server (local, stdio)",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node src/test_client.js",
+    "test:with-module2": "MODULE2_SERVER_PATH=../kg-module2/src/server.js node src/test_client.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0"
