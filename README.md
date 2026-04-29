@@ -16,6 +16,8 @@ Module 2 output (AI-ready datasets)
 │         MCP Server (stdio)           │
 │                                      │
 │  Tool 1: ingest_dataset              │  ◄─ incremental, per dataset
+│    └─ Open Targets Platform API      │
+│        (bioinformatics tool, EBI)    │
 │    └─ Claude: extract_entities       │
 │    └─ Dedup: embedding similarity    │
 │    └─ Claude: infer_relations        │
@@ -83,8 +85,22 @@ Restart Claude Desktop. The five tools will appear automatically.
 ## Tools
 
 ### `ingest_dataset`
-Incrementally ingests one AI-ready dataset. Runs entity extraction, embedding-
-based deduplication, relation inference, and edge revision — all via Claude.
+Incrementally ingests one AI-ready dataset. Queries the **Open Targets
+Platform** (EMBL-EBI's biomedical knowledge graph of target-disease-drug
+evidence) using the dataset name and field names as seed terms, then runs
+entity extraction (Claude, grounded in Open Targets matches), embedding-
+based deduplication, relation inference, and edge revision.
+
+**Bioinformatics tool: Open Targets Platform** — a public KG integrating
+evidence from genomics, drug discovery, and disease databases to link gene
+targets, diseases, and drugs. Free GraphQL API, no authentication.
+Continuously published in the *Nucleic Acids Research* Database Issue
+(2024-2025 release: [doi.org/10.1093/nar/gkae1128](https://doi.org/10.1093/nar/gkae1128)).
+Module 3 calls Open Targets' `search` query for each seed term (dataset
+name + first 5 field names), then provides the matches to Claude during
+entity extraction so the resulting graph is grounded in real biomedical
+identifiers (Ensembl gene IDs, EFO disease IDs, ChEMBL drug IDs) rather
+than relying solely on Claude's training data.
 
 **Required fields:**
 | Field | Type | Description |
