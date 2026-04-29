@@ -1,39 +1,41 @@
-# Module 3 — Knowledge Graph Builder
+# Module 2 — Data Harmonization
 
-An MCP server (local, stdio) that takes AI-ready, FAIR-validated datasets from
-Module 2 and builds an incrementally-updated knowledge graph using Claude as the
-reasoning engine.
+An MCP server (local, stdio) that takes structured metadata descriptions from
+Module 1 and harmonizes them into AI-ready, FAIR-scored datasets using Claude
+as the reasoning engine. Automatically hands off to Module 3.
 
 ---
 
 ## Architecture
 
 ```
-Module 2 output (AI-ready datasets)
+Module 1 output (structured metadata descriptions)
         │
         ▼
-┌──────────────────────────────────────┐
-│         MCP Server (stdio)           │
-│                                      │
-│  Tool 1: ingest_dataset              │  ◄─ incremental, per dataset
-│    └─ Claude: extract_entities       │
-│    └─ Dedup: embedding similarity    │
-│    └─ Claude: infer_relations        │
-│    └─ Claude: revise_edges           │
-│                                      │
-│  Tool 2: build_graph                 │  ◄─ full pass after bulk ingest
-│    └─ Global dedup pass              │
-│    └─ Claude: full relation sweep    │
-│                                      │
-│  Tool 3: query_graph                 │  ◄─ natural language → Claude
-│                                      │
-│  Tool 4: export_graph                │  ◄─ JSON-LD / Turtle / CSV
-│  Tool 5: get_graph_status            │
-└──────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│           MCP Server (stdio)                     │
+│                                                  │
+│  Tool 1: harmonize_dataset                       │
+│    └─ OLS4 API (EMBL-EBI Ontology Lookup         │
+│        Service v4) — bioinformatics tool         │
+│    └─ Claude: field harmonization                │
+│         → Darwin Core ontology mapping           │
+│         → unit detection + normalization         │
+│         → missing value strategies               │
+│         → rename flags embedded in output        │
+│    └─ Claude: FAIR score (holistic, I-priority)  │
+│    └─ Claude: sample record transformation       │
+│    └─ Auto handoff → Module 3 ingest_dataset     │
+│                                                  │
+│  Tool 2: get_harmonization_log                   │
+│  Tool 3: export_dataset (CSV / JSON / Excel)     │
+│  Tool 4: get_queue_status                        │
+│  Tool 5: flush_queue                             │
+└──────────────────────────────────────────────────┘
         │
         ▼
-  data/graph.json  (persisted, versioned)
-  exports/         (JSON-LD, Turtle/RDF, Edge CSV)
+  exports/   (CSV, JSON, Excel — with embedded metadata)
+  → Module 3 ingest_dataset (automatic, fire-and-forget)
 ```
 
 ---
@@ -42,162 +44,209 @@ Module 2 output (AI-ready datasets)
 
 ### Prerequisites
 - Node.js ≥ 18
-- An `ANTHROPIC_API_KEY` environment variable
+- `ANTHROPIC_API_KEY` environment variable
+- Module 3 running or its path configured (optional — datasets queue if unavailable)
 
 ### Install
 
 ```bash
-cd kg-module3
+cd kg-module2
 npm install
 ```
 
-### Run the server (standalone)
+### Run standalone
 
 ```bash
 ANTHROPIC_API_KEY=sk-... npm start
 ```
 
-### Register with Claude Desktop
+### Run test client
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
-(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+```bash
+ANTHROPIC_API_KEY=sk-... npm test
+```
+
+### Run test client with automatic Module 3 handoff
+
+```bash
+ANTHROPIC_API_KEY=sk-... \
+MODULE3_SERVER_PATH=/absolute/path/to/kg-module3/src/server.js \
+npm run test:with-module3
+```
+
+---
+
+## Register with Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
+    "kg-module2": {
+      "command": "node",
+      "args": ["/absolute/path/to/kg-module2/src/server.js"],
+      "env": {
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "MODULE3_SERVER_PATH": "/absolute/path/to/kg-module3/src/server.js"
+      }
+    },
     "kg-module3": {
       "command": "node",
       "args": ["/absolute/path/to/kg-module3/src/server.js"],
       "env": {
-        "ANTHROPIC_API_KEY": "sk-..."
+        "ANTHROPIC_API_KEY": "sk-ant-..."
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop. The five tools will appear automatically.
+Restart Claude Desktop. Both modules will appear as connected MCP servers.
 
 ---
 
 ## Tools
 
-### `ingest_dataset`
-Incrementally ingests one AI-ready dataset. Runs entity extraction, embedding-
-based deduplication, relation inference, and edge revision — all via Claude.
+### `harmonize_dataset`
+The core tool. Accepts a structured metadata description, calls EMBL-EBI's
+**OLS4 (Ontology Lookup Service v4)** to retrieve candidate ontology matches
+for each input field, then runs three Claude passes — field harmonization,
+FAIR scoring, and sample record transformation — and automatically hands the
+result off to Module 3.
+
+**Bioinformatics tool: OLS4 (Ontology Lookup Service v4)** — EMBL-EBI's
+federated ontology registry, hosting hundreds of biomedical ontologies
+including Darwin Core, Schema.org, Dublin Core, GO, ChEBI, MONDO, EFO,
+Uberon, and NCIt. Continuously published as part of EMBL-EBI's annual
+*Nucleic Acids Research* Database Issue (2025 issue:
+[doi.org/10.1093/nar/gkae1148](https://doi.org/10.1093/nar/gkae1148)). For
+each input field, Module 2 queries `/ols4/api/search` (free, no auth) for the
+top 5 candidate matches, biased toward the three target ontologies (dwc,
+schema, dcterms). The candidates are passed into Claude's harmonization
+prompt as evidence-backed suggestions; Claude makes the final mapping
+decision using both the static mapping dictionary and OLS4 evidence.
 
 **Required fields:**
 | Field | Type | Description |
 |---|---|---|
 | `name` | string | Dataset name |
 | `domain` | string | Scientific domain |
-| `records` | number | Row count |
-| `fairScore` | number | FAIR compliance score (0–1) |
+| `records` | number | Record count |
 
-**Optional:** `fields` (array), `description`, `sourceId`
+**Optional:** `fields` (array), `description`, `sourceId`, `units` (object)
 
-**Returns:** nodes added, total nodes/edges, full activity log.
-
----
-
-### `build_graph`
-Runs a full graph build pass: global deduplication sweep across all nodes,
-followed by a complete relation inference call across the entire node set.
-Use after batching multiple `ingest_dataset` calls.
-
-**Optional:** `dedup_threshold` (default 0.72)
+**Returns:** dataset ID, FAIR score breakdown, rename flags, unmapped fields,
+unit conflicts, transformation summary, Module 3 handoff status, improvement suggestions.
 
 ---
 
-### `query_graph`
-Answers a natural-language question using Claude reasoning over the live graph.
-
-```
-Q: What relationships exist between genomic sequences and metabolic pathways?
-A: The graph shows DNA Sequence nodes (from GenBank) connected to Metabolic
-   Pathway nodes (from KEGG) via "encodes" and "maps to" relations...
-```
+### `get_harmonization_log`
+Returns all datasets harmonized this session with their FAIR scores and field counts.
+Optionally filter by `dataset_id`.
 
 ---
 
-### `export_graph`
-Exports the graph in one or all formats.
+### `export_dataset`
+Exports a harmonized dataset in one or all formats. All exports embed FAIR scores,
+rename flags, and unit normalization metadata directly in the file.
 
-| Format | File | Standard |
+| Format | File | Sheets/Sections |
 |---|---|---|
-| `jsonld` | `exports/knowledge_graph.jsonld` | JSON-LD / Schema.org |
-| `turtle` | `exports/knowledge_graph.ttl` | Turtle / RDF |
-| `csv` | `exports/edges.csv` | Edge list with provenance |
+| `csv` | `{id}_harmonized.csv` | Metadata as comments + data rows |
+| `json` | `{id}_harmonized.json` | Full JSON-LD with @context |
+| `excel` | `{id}_harmonized.xls` | 3 sheets: Data, FAIR Score, Improvements |
 | `all` | all three | — |
 
-All node URIs follow `urn:kg:module3:{id}` — structured for future persistent
-identifier assignment (Findability-first FAIR design).
+---
+
+### `get_queue_status`
+Shows datasets waiting to be sent to Module 3 — name, queue time, attempt count.
+If `MODULE3_SERVER_PATH` is not configured, all datasets queue automatically.
 
 ---
 
-### `get_graph_status`
-Returns node counts by type, edge count, average FAIR score, ingested dataset
-list, graph version, and last-updated timestamp.
+### `flush_queue`
+Retries all queued datasets against Module 3. Pass `module3_server_path` to
+override the configured path. Use after Module 3 becomes available.
 
 ---
 
-## Deduplication
+## Harmonization details
 
-Deduplication uses **Jaccard token similarity** over normalised node names as an
-embedding proxy (no external embedding endpoint required). The default threshold
-is **0.72** — tunable per `build_graph` call.
+### Darwin Core ontology mapping
+Fields are mapped to Darwin Core terms first, then Schema.org, then Dublin Core.
+Claude performs the mapping automatically. Unmapped fields are flagged and returned
+in `unmappedFields`.
 
-When a duplicate is detected:
-- The node with the **higher FAIR score** is kept
-- Edges referencing the removed node are **repointed** to the surviving node
-- Self-loops introduced by merging are removed
-- Duplicate edges (same from/to/label) are collapsed
+**Example mappings:**
+| Input field | Canonical term | Ontology |
+|---|---|---|
+| `organism` | `dwc:scientificName` | Darwin Core |
+| `accession` | `dwc:catalogNumber` | Darwin Core |
+| `sequence` | `dwc:associatedSequences` | Darwin Core |
+| `function` | `dwc:taxonRemarks` | Darwin Core |
+| `source` | `dwc:institutionCode` | Darwin Core |
 
-This mirrors the deduplication design intended for Module 1, so the threshold
-and merge strategy can be shared when Module 1 is built.
+### Rename flags
+When a field is renamed for canonical consistency, a flag is embedded in the
+output metadata:
+```
+RENAMED: organism → dwc:scientificName
+```
+Flags appear in the `renameFlags` array in the tool response, and are embedded
+in all export formats.
+
+### Unit normalization
+Units are detected automatically from field names and descriptions. Explicit
+units (passed via the `units` parameter) take priority. Conflicts between
+detected and explicit units are reported in `unitConflicts`.
+
+### Missing value strategies
+Claude selects the best strategy per field:
+- Numeric fields → mean or median
+- Categorical fields → mode
+- Sequential fields → forward fill
+- Identifier fields → empty string or null
+
+### FAIR scoring
+Holistic scoring across all four pillars, weighted to prioritize Interoperability:
+- **F** Findability × 0.2
+- **A** Accessibility × 0.2
+- **I** Interoperability × 0.4  ← priority
+- **R** Reusability × 0.2
 
 ---
 
-## Graph persistence
+## Module 3 handoff
 
-The graph is stored at `data/graph.json` and versioned on every write. Each
-build increments `meta.version`. The file survives server restarts — re-ingesting
-the same dataset will update the existing node rather than duplicate it.
+When `MODULE3_SERVER_PATH` is set, Module 2 automatically spawns Module 3 as a
+child process and calls `ingest_dataset` with:
+- The harmonized field names (canonical Darwin Core terms)
+- The FAIR score calculated by Module 2
+- The dataset description including transformation notes
+- The upstream source ID
+
+The handoff is fire-and-forget — Module 2 does not wait for Module 3 to finish.
+If the handoff fails, the dataset is queued and can be retried via `flush_queue`.
 
 ---
 
-## Testing
+## Pipeline
 
-```bash
-ANTHROPIC_API_KEY=sk-... node src/test_client.js
+```
+Module 1 → discovers + ranks legacy databases
+    ↓
+Module 2 → harmonizes raw data → AI-ready datasets  ← this module
+    ↓ (automatic)
+Module 3 → builds knowledge graph
 ```
 
-This spawns the server as a child process and exercises all five tools
-end-to-end with three real datasets (GenBank, KEGG, UniProt).
-
 ---
 
-## FAIR alignment
+## Connecting to Module 1
 
-| Pillar | Implementation |
-|---|---|
-| **Findability** | Every node carries a `urn:kg:module3:{id}` URI. JSON-LD export uses `@id`. Dataset nodes store upstream `sourceId`. |
-| **Accessibility** | JSON-LD and Turtle exports are machine-readable standard formats. |
-| **Interoperability** | Turtle export uses `rdfs:label`, `schema:about`, `schema:dateCreated`. |
-| **Reusability** | Every edge carries `source` (dataset name), `rationale`, and `confidence`. |
-
----
-
-## Connecting to Module 1 & 2
-
-Module 3 is designed to be the terminal consumer in the pipeline:
-
-```
-Module 1 → discovers + ranks legacy databases (FAIR scoring, dedup)
-Module 2 → harmonizes raw data → AI-ready datasets
-Module 3 → builds knowledge graph from AI-ready datasets  ← this module
-```
-
-The `ingest_dataset` tool accepts the same fields Module 2 would produce.
-When Modules 1 and 2 are built, they can call `ingest_dataset` directly via
-MCP tool calls, making the pipeline fully agentic.
+When Module 1 is built, it will call `harmonize_dataset` directly via MCP tool
+calls, passing structured metadata descriptions of the legacy databases it
+discovers. The `sourceId` field should carry the upstream identifier (DOI,
+accession number, or database URL) that Module 1 assigns during discovery.
