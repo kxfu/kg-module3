@@ -1,0 +1,1071 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PETER PAN — Pipeline Dashboard</title>
+
+<!-- Vis Network for the knowledge graph view -->
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+
+<style>
+  /* ─── Tokens — matched to the slide deck ────────────────────────────── */
+  :root {
+    --page:       #f4f4f2;
+    --panel:      #ffffff;
+    --slate:      #5a6362;
+    --slate-d:    #3f4847;
+    --green:      #6b8068;   /* Module 1 */
+    --blue:       #5b7c99;   /* Module 2 */
+    --amber:      #b58b5b;   /* Module 3 */
+    --edge:       #c9cdc8;
+    --pale:       #edefea;
+    --ink:        #2a2f2d;
+    --muted:      #7a8280;
+
+    --fnt-display: "Cormorant Garamond", Georgia, serif;
+    --fnt-body:    "Inter Tight", "Helvetica Neue", system-ui, sans-serif;
+    --fnt-mono:    "JetBrains Mono", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--fnt-body);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { min-height: 100vh; }
+
+  /* ─── Header ─────────────────────────────────────────────────────────── */
+  header.app {
+    border-bottom: 1px solid var(--edge);
+    padding: 24px 32px 18px;
+    background: var(--panel);
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  header.app h1 {
+    font-family: var(--fnt-display);
+    font-weight: 500;
+    font-size: 32px;
+    letter-spacing: -0.01em;
+    color: var(--slate-d);
+  }
+  header.app .tag {
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+  header.app .ctl {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  header.app button, header.app label {
+    font: inherit;
+    font-size: 12.5px;
+    padding: 8px 14px;
+    border: 1px solid var(--edge);
+    background: var(--panel);
+    color: var(--ink);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color .15s, color .15s;
+  }
+  header.app button:hover, header.app label:hover { border-color: var(--slate); }
+  header.app input[type="file"] { display: none; }
+  header.app .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    border: 1px solid var(--edge);
+    background: var(--pale);
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  header.app .pill .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+  }
+  header.app .pill.live .dot { background: var(--amber); }
+
+  /* ─── Tabs ──────────────────────────────────────────────────────────── */
+  nav.tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--edge);
+    background: var(--panel);
+    padding: 0 32px;
+  }
+  nav.tabs button {
+    appearance: none;
+    background: none;
+    border: none;
+    font: inherit;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 14px 18px;
+    cursor: pointer;
+    position: relative;
+    transition: color .15s;
+  }
+  nav.tabs button:hover { color: var(--slate-d); }
+  nav.tabs button.active { color: var(--slate-d); }
+  nav.tabs button.active::after {
+    content: "";
+    position: absolute;
+    left: 18px; right: 18px; bottom: -1px;
+    height: 2px;
+    background: var(--accent, var(--slate));
+  }
+  nav.tabs button[data-mod="m1"].active { --accent: var(--green); }
+  nav.tabs button[data-mod="m2"].active { --accent: var(--blue); }
+  nav.tabs button[data-mod="m3"].active { --accent: var(--amber); }
+  nav.tabs button[data-mod="ov"].active { --accent: var(--slate); }
+
+  main {
+    padding: 28px 32px 60px;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ─── Stat strip ────────────────────────────────────────────────────── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .stats .stat {
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    padding: 18px 20px;
+    border-radius: 6px;
+  }
+  .stats .stat .label {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .stats .stat .value {
+    font-family: var(--fnt-display);
+    font-size: 36px;
+    line-height: 1.1;
+    color: var(--slate-d);
+    font-weight: 500;
+    margin-top: 4px;
+  }
+  .stats .stat.green .value { color: var(--green); }
+  .stats .stat.blue  .value { color: var(--blue);  }
+  .stats .stat.amber .value { color: var(--amber); }
+
+  /* ─── Layout grids ──────────────────────────────────────────────────── */
+  .row { display: grid; grid-template-columns: 1.6fr 1fr; gap: 18px; }
+  .row.full { grid-template-columns: 1fr; }
+  @media (max-width: 1100px) { .row { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 6px;
+    padding: 22px;
+    margin-bottom: 18px;
+  }
+  .card h2 {
+    font-family: var(--fnt-display);
+    font-weight: 500;
+    font-size: 22px;
+    color: var(--slate-d);
+    margin-bottom: 4px;
+  }
+  .card .sub {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 18px;
+  }
+
+  /* ─── Tables ────────────────────────────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--edge);
+  }
+  tbody td {
+    padding: 12px;
+    border-bottom: 1px solid var(--pale);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--pale); }
+  td .name { font-weight: 500; color: var(--slate-d); }
+  td .desc { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  td .badge {
+    display: inline-block;
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: var(--pale);
+    color: var(--slate);
+    margin-right: 6px;
+  }
+  td .badge.dead { background: #f4d4d0; color: #8a3a30; }
+
+  /* FAIR bar */
+  .bar {
+    height: 5px;
+    background: var(--pale);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .bar > i { display: block; height: 100%; }
+
+  /* ─── FAIR distribution chart (simple SVG) ──────────────────────────── */
+  .pillars {
+    display: grid;
+    grid-template-columns: 90px 1fr 50px;
+    gap: 10px 14px;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .pillars .pname { font-size: 12px; color: var(--ink); }
+  .pillars .pval { font-family: var(--fnt-mono); font-size: 12px; text-align: right; color: var(--muted); }
+
+  /* ─── Graph view ────────────────────────────────────────────────────── */
+  #graph {
+    width: 100%;
+    height: 540px;
+    border: 1px solid var(--edge);
+    border-radius: 6px;
+    background: linear-gradient(180deg, #fafaf8 0%, #f4f4f2 100%);
+  }
+  .legend {
+    display: flex;
+    gap: 18px;
+    margin-top: 14px;
+    font-size: 12px;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+  .legend span {
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .legend i {
+    width: 10px; height: 10px; border-radius: 50%;
+  }
+
+  /* ─── Scenario switcher ─────────────────────────────────────────────── */
+  .scenario-bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 18px;
+  }
+  .scenario-bar .scenario-label {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-right: 6px;
+  }
+  .scenario-bar button.scenario {
+    appearance: none;
+    background: var(--pale);
+    border: 1px solid var(--edge);
+    color: var(--ink);
+    font: inherit;
+    font-size: 12.5px;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .scenario-bar button.scenario:hover { border-color: var(--slate); }
+  .scenario-bar button.scenario.active {
+    background: var(--slate-d);
+    color: white;
+    border-color: var(--slate-d);
+  }
+  .scenario-bar .scenario-note {
+    margin-left: auto;
+    font-size: 11.5px;
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  /* ─── Empty state ──────────────────────────────────────────────────── */
+  .empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .empty .big {
+    font-family: var(--fnt-display);
+    font-size: 22px;
+    color: var(--slate-d);
+    margin-bottom: 6px;
+  }
+
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 24px;
+    border-top: 1px solid var(--edge);
+    background: var(--panel);
+  }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div>
+    <h1>PETER PAN — Pipeline Dashboard</h1>
+    <div class="tag">Legacy Database Discovery · Harmonization · Knowledge Graph</div>
+  </div>
+  <div class="ctl">
+    <span id="dataPill" class="pill"><i class="dot"></i><span id="dataLabel">Sample data loaded</span></span>
+    <label for="loadM1">Load registry.json</label>
+    <input type="file" id="loadM1" accept=".json" />
+    <label for="loadM3">Load graph.json</label>
+    <input type="file" id="loadM3" accept=".json" />
+    <button id="reset" type="button">Reset to sample</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="active" data-mod="ov">Overview</button>
+  <button data-mod="m1">Module 1 — Discovery</button>
+  <button data-mod="m2">Module 2 — Harmonization</button>
+  <button data-mod="m3">Module 3 — Knowledge Graph</button>
+</nav>
+
+<main>
+
+<!-- ─── Overview ───────────────────────────────────────────────────────── -->
+<section id="ov" class="panel active">
+  <div class="stats">
+    <div class="stat green"><div class="label">Legacy databases</div><div class="value" id="ovDb">—</div></div>
+    <div class="stat blue"><div class="label">Harmonized datasets</div><div class="value" id="ovDs">—</div></div>
+    <div class="stat amber"><div class="label">Graph nodes</div><div class="value" id="ovNodes">—</div></div>
+    <div class="stat"><div class="label">Graph edges</div><div class="value" id="ovEdges">—</div></div>
+  </div>
+  <div class="row">
+    <div class="card">
+      <h2>FAIR score distribution</h2>
+      <div class="sub">Across discovered legacy databases (Module 1)</div>
+      <div id="fairBuckets"></div>
+    </div>
+    <div class="card">
+      <h2>Pipeline status</h2>
+      <div class="sub">Last activity per module</div>
+      <table>
+        <tbody id="pipelineStatus"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Module 1 ───────────────────────────────────────────────────────── -->
+<section id="m1" class="panel">
+  <div class="stats">
+    <div class="stat green"><div class="label">Total discovered</div><div class="value" id="m1Total">—</div></div>
+    <div class="stat"><div class="label">Approved</div><div class="value" id="m1Approved">—</div></div>
+    <div class="stat"><div class="label">Avg FAIR</div><div class="value" id="m1Fair">—</div></div>
+    <div class="stat"><div class="label">Dead URLs</div><div class="value" id="m1Dead">—</div></div>
+  </div>
+  <div class="card">
+    <h2>Legacy database registry</h2>
+    <div class="sub">Sorted by legacy score · highest abandonment first</div>
+    <table>
+      <thead><tr>
+        <th>Database</th><th>Domain</th><th style="width:140px">FAIR</th><th style="width:140px">Legacy</th><th>Source PMIDs</th>
+      </tr></thead>
+      <tbody id="m1Rows"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ─── Module 2 ───────────────────────────────────────────────────────── -->
+<section id="m2" class="panel">
+  <div class="scenario-bar">
+    <span class="scenario-label">Show harmonization for:</span>
+    <button class="scenario active" data-scenario="m2-pipeline">Pipeline (from Module 1)</button>
+    <button class="scenario" data-scenario="m2-chembl">Standalone — ChEMBL bioactivity</button>
+    <span class="scenario-note" id="m2Note"></span>
+  </div>
+  <div class="stats">
+    <div class="stat blue"><div class="label">Datasets harmonized</div><div class="value" id="m2Total">—</div></div>
+    <div class="stat"><div class="label">Fields renamed</div><div class="value" id="m2Renamed">—</div></div>
+    <div class="stat"><div class="label">Avg FAIR</div><div class="value" id="m2Fair">—</div></div>
+    <div class="stat"><div class="label">Unmapped fields</div><div class="value" id="m2Unmapped">—</div></div>
+  </div>
+  <div class="card">
+    <h2>Harmonized datasets</h2>
+    <div class="sub">Field-level Darwin Core / Schema.org / Dublin Core mapping with OLS4 grounding</div>
+    <table>
+      <thead><tr>
+        <th>Dataset</th><th>Source</th><th>Records</th><th style="width:200px">FAIR (I-priority)</th><th>Field renames</th>
+      </tr></thead>
+      <tbody id="m2Rows"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ─── Module 3 ───────────────────────────────────────────────────────── -->
+<section id="m3" class="panel">
+  <div class="scenario-bar">
+    <span class="scenario-label">Knowledge graph from:</span>
+    <button class="scenario active" data-scenario="m3-pipeline">Pipeline (Modules 1+2 chained)</button>
+    <button class="scenario" data-scenario="m3-opentargets">Standalone — Open Targets</button>
+    <span class="scenario-note" id="m3Note"></span>
+  </div>
+  <div class="stats">
+    <div class="stat amber"><div class="label">Nodes</div><div class="value" id="m3Nodes">—</div></div>
+    <div class="stat"><div class="label">Edges</div><div class="value" id="m3Edges">—</div></div>
+    <div class="stat"><div class="label">Datasets ingested</div><div class="value" id="m3Datasets">—</div></div>
+    <div class="stat"><div class="label">Graph version</div><div class="value" id="m3Version">—</div></div>
+  </div>
+  <div class="card">
+    <h2>Knowledge graph</h2>
+    <div class="sub">Interactive · drag to reposition · scroll to zoom</div>
+    <div id="graph"></div>
+    <div class="legend">
+      <span><i style="background:var(--amber)"></i> Dataset node</span>
+      <span><i style="background:#7AA078"></i> Entity (gene/protein/drug)</span>
+      <span><i style="background:#5B7C99"></i> Concept (disease/process)</span>
+      <span><i style="background:#9C9C8C"></i> Attribute</span>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  PETER PAN · Kathy Fu &amp; Ray Ding · UAB INFO 603 · Faculty Advisor: Dr. Jake Chen
+</footer>
+
+<script>
+/* ─────────────────────────────────────────────────────────────────────────
+   Sample data — realistic shape, derived from the offline test outputs.
+   This is what the dashboard shows before any real files are loaded.
+   ───────────────────────────────────────────────────────────────────────── */
+const SAMPLE_REGISTRY = {
+  "db1_pir_protein_information_resource": {
+    name: "Protein Information Resource (PIR)",
+    domain: "Proteomics",
+    description: "Pre-INSDC era protein sequence database, distributed as flat files via FTP. Eventually merged into UniProt; the original PIR-PSD format is no longer maintained.",
+    url: "ftp://ftp.pir.georgetown.edu/databases/",
+    yearOfDatabase: "1984",
+    fairScore: {
+      findability: { score: 0.55 },
+      accessibility: { score: 0.20 },
+      interoperability: { score: 0.30 },
+      reusability: { score: 0.50 },
+      overallScore: 0.39,
+      legacyScore: 0.85
+    },
+    urlAbandoned: true,
+    sourcePMIDs: ["12520028", "9847219"],
+    approved: true
+  },
+  "db1_atlas_protein_seq_struct": {
+    name: "Atlas of Protein Sequence and Structure",
+    domain: "Proteomics",
+    description: "Margaret Dayhoff's seminal printed-then-digital protein archive (NBRF). Fixed-width text files; no API; only of historical and reference value today.",
+    url: null,
+    yearOfDatabase: "1965",
+    fairScore: {
+      findability: { score: 0.40 },
+      accessibility: { score: 0.10 },
+      interoperability: { score: 0.20 },
+      reusability: { score: 0.45 },
+      overallScore: 0.29,
+      legacyScore: 0.92
+    },
+    urlAbandoned: true,
+    sourcePMIDs: ["1432006"],
+    approved: true
+  },
+  "db1_genbank_flat_pre_insdc": {
+    name: "GenBank flat-file archive (pre-INSDC)",
+    domain: "Genomics",
+    description: "Early GenBank distribution as flat-file releases before the INSDC integration. The flat files persist for historical reproducibility but lack a modern API layer.",
+    url: "https://ftp.ncbi.nih.gov/genbank/release.notes/",
+    yearOfDatabase: "1982",
+    fairScore: {
+      findability: { score: 0.65 },
+      accessibility: { score: 0.40 },
+      interoperability: { score: 0.30 },
+      reusability: { score: 0.55 },
+      overallScore: 0.48,
+      legacyScore: 0.70
+    },
+    urlAbandoned: false,
+    sourcePMIDs: ["6310439", "8594606"],
+    approved: false
+  },
+  "db1_owl_composite": {
+    name: "OWL composite protein database",
+    domain: "Proteomics",
+    description: "Composite non-redundant protein sequence database compiled from PIR, SWISS-PROT, GenBank CDS translations, and others. Discontinued; URL no longer resolves.",
+    url: "http://www.bioinf.man.ac.uk/dbbrowser/OWL/",
+    yearOfDatabase: "1992",
+    fairScore: {
+      findability: { score: 0.30 },
+      accessibility: { score: 0.05 },
+      interoperability: { score: 0.20 },
+      reusability: { score: 0.30 },
+      overallScore: 0.21,
+      legacyScore: 0.95
+    },
+    urlAbandoned: true,
+    sourcePMIDs: ["7796298"],
+    approved: false
+  },
+  "db1_taxonomy_itis_dump": {
+    name: "ITIS early text dump",
+    domain: "Taxonomy",
+    description: "Early Integrated Taxonomic Information System distributions as fixed-width text files predating the modern web service. Useful for historical name reconciliation.",
+    url: "https://itis.gov/downloads/",
+    yearOfDatabase: "1996",
+    fairScore: {
+      findability: { score: 0.55 },
+      accessibility: { score: 0.45 },
+      interoperability: { score: 0.35 },
+      reusability: { score: 0.50 },
+      overallScore: 0.46,
+      legacyScore: 0.62
+    },
+    urlAbandoned: false,
+    sourcePMIDs: ["10592272"],
+    approved: false
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Module 2 sample scenarios
+// "pipeline"  — datasets that arrived from Module 1 (legacy DBs)
+// "chembl"    — standalone use: harmonize ChEMBL bioactivity export
+// ─────────────────────────────────────────────────────────────────────────
+const SAMPLE_M2_SCENARIOS = {
+  "m2-pipeline": {
+    note: "Datasets handed off from Module 1 — legacy biological databases.",
+    datasets: [
+      {
+        id: "ds2_pir_harmonized",
+        name: "Protein Information Resource (PIR) — harmonized",
+        sourceId: "db1_pir_protein_information_resource",
+        records: 283000,
+        fair: { findability: 0.62, accessibility: 0.55, interoperability: 0.85, reusability: 0.65, overall: 0.69 },
+        renames: [
+          { from: "entry_name", to: "dwc:catalogNumber" },
+          { from: "organism", to: "dwc:scientificName" },
+          { from: "sequence", to: "dwc:associatedSequences" },
+          { from: "function", to: "dwc:taxonRemarks" }
+        ],
+        unmapped: ["pir_classification_code"]
+      },
+      {
+        id: "ds2_atlas_harmonized",
+        name: "Atlas of Protein Sequence and Structure — harmonized",
+        sourceId: "db1_atlas_protein_seq_struct",
+        records: 1854,
+        fair: { findability: 0.55, accessibility: 0.45, interoperability: 0.78, reusability: 0.50, overall: 0.59 },
+        renames: [
+          { from: "protein_name", to: "schema:name" },
+          { from: "species", to: "dwc:scientificName" },
+          { from: "sequence_data", to: "dwc:associatedSequences" }
+        ],
+        unmapped: []
+      }
+    ]
+  },
+  "m2-chembl": {
+    note: "Module 2 used independently on ChEMBL — no Module 1 input required.",
+    datasets: [
+      {
+        id: "ds2_chembl_bioactivity",
+        name: "ChEMBL 34 — Bioactivity export",
+        sourceId: "chembl:release-34",
+        records: 20334684,
+        fair: { findability: 0.95, accessibility: 0.92, interoperability: 0.88, reusability: 0.85, overall: 0.90 },
+        renames: [
+          { from: "molregno", to: "schema:identifier" },
+          { from: "canonical_smiles", to: "obi:0002088" },
+          { from: "standard_inchi_key", to: "schema:identifier" },
+          { from: "target_chembl_id", to: "schema:about" },
+          { from: "assay_chembl_id", to: "obi:0000070" },
+          { from: "standard_value", to: "dwc:measurementValue" },
+          { from: "standard_units", to: "dwc:measurementUnit" },
+          { from: "standard_type", to: "dwc:measurementType" },
+          { from: "pchembl_value", to: "dwc:measurementValue" },
+          { from: "doc_id", to: "dcterms:source" },
+          { from: "year", to: "dcterms:date" }
+        ],
+        unmapped: ["activity_comment"]
+      },
+      {
+        id: "ds2_chembl_compounds",
+        name: "ChEMBL 34 — Compound dictionary",
+        sourceId: "chembl:release-34",
+        records: 2431025,
+        fair: { findability: 0.93, accessibility: 0.90, interoperability: 0.82, reusability: 0.80, overall: 0.86 },
+        renames: [
+          { from: "chembl_id", to: "schema:identifier" },
+          { from: "pref_name", to: "schema:name" },
+          { from: "max_phase", to: "schema:additionalProperty" },
+          { from: "molecule_type", to: "schema:additionalType" },
+          { from: "first_approval", to: "dcterms:dateAccepted" },
+          { from: "withdrawn_year", to: "dcterms:dateRejected" }
+        ],
+        unmapped: ["polymer_flag", "prodrug"]
+      }
+    ]
+  }
+};
+
+// Default scenario selected on page load
+let activeM2Scenario = "m2-pipeline";
+
+// Backward-compat: SAMPLE_M2 is read by the "live load" path; always reflects the current scenario.
+function currentM2() { return SAMPLE_M2_SCENARIOS[activeM2Scenario].datasets; }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Module 3 sample scenarios
+// "pipeline"    — graph built from Module 2 handoffs (PIR + Atlas + cancer)
+// "opentargets" — standalone: graph built directly from Open Targets queries
+//                  for Type 2 Diabetes (no upstream modules involved)
+// ─────────────────────────────────────────────────────────────────────────
+const SAMPLE_GRAPH_SCENARIOS = {
+  "m3-pipeline": {
+    note: "Knowledge graph constructed from Modules 1 → 2 → 3 chained handoffs.",
+    graph: {
+      meta: { version: 4, ingestedDatasets: ["PIR (harmonized)", "Atlas of Protein (harmonized)", "breast cancer dataset"], lastUpdated: new Date().toISOString() },
+      nodes: {
+        "dat_pir":              { id: "dat_pir", name: "PIR (harmonized)", type: "dataset", domain: "Proteomics", fairScore: 0.69 },
+        "dat_atlas":            { id: "dat_atlas", name: "Atlas of Protein (harmonized)", type: "dataset", domain: "Proteomics", fairScore: 0.59 },
+        "dat_breast_cancer":    { id: "dat_breast_cancer", name: "breast cancer dataset", type: "dataset", domain: "Oncology", fairScore: 0.78 },
+        "ent_brca1":            { id: "ent_brca1", name: "BRCA1", type: "entity", domain: "Genomics", fairScore: 0.85, description: "Open Targets: ENSG00000012048" },
+        "ent_tp53":             { id: "ent_tp53", name: "TP53", type: "entity", domain: "Genomics", fairScore: 0.85, description: "Open Targets: ENSG00000141510" },
+        "ent_tamoxifen":        { id: "ent_tamoxifen", name: "Tamoxifen", type: "entity", domain: "Drug", fairScore: 0.90, description: "Open Targets: CHEMBL83" },
+        "ent_dayhoff_pam":      { id: "ent_dayhoff_pam", name: "PAM substitution matrix", type: "entity", domain: "Bioinformatics", fairScore: 0.82 },
+        "ent_swissprot":        { id: "ent_swissprot", name: "SWISS-PROT entry", type: "entity", domain: "Proteomics", fairScore: 0.78 },
+        "con_breast_cancer":    { id: "con_breast_cancer", name: "Breast carcinoma", type: "concept", domain: "Disease", fairScore: 0.80, description: "Open Targets: EFO_0000305" },
+        "con_protein_evolution":{ id: "con_protein_evolution", name: "Protein evolution", type: "concept", domain: "Bioinformatics", fairScore: 0.72 },
+        "con_seq_alignment":    { id: "con_seq_alignment", name: "Sequence alignment", type: "concept", domain: "Bioinformatics", fairScore: 0.75 },
+        "att_seq_length":       { id: "att_seq_length", name: "sequence length", type: "attribute", domain: "Proteomics", fairScore: 0.70 }
+      },
+      edges: [
+        { from: "dat_pir", to: "ent_swissprot", label: "contains" },
+        { from: "dat_pir", to: "ent_dayhoff_pam", label: "contains" },
+        { from: "dat_pir", to: "att_seq_length", label: "contains" },
+        { from: "dat_atlas", to: "ent_dayhoff_pam", label: "contains" },
+        { from: "dat_atlas", to: "con_protein_evolution", label: "contains" },
+        { from: "dat_breast_cancer", to: "ent_brca1", label: "contains" },
+        { from: "dat_breast_cancer", to: "ent_tp53", label: "contains" },
+        { from: "dat_breast_cancer", to: "ent_tamoxifen", label: "contains" },
+        { from: "dat_breast_cancer", to: "con_breast_cancer", label: "contains" },
+        { from: "ent_brca1", to: "con_breast_cancer", label: "associated with" },
+        { from: "ent_tp53", to: "con_breast_cancer", label: "associated with" },
+        { from: "ent_tamoxifen", to: "con_breast_cancer", label: "treats" },
+        { from: "ent_dayhoff_pam", to: "con_protein_evolution", label: "encodes substitution rates of" },
+        { from: "ent_dayhoff_pam", to: "con_seq_alignment", label: "scoring matrix for" },
+        { from: "ent_swissprot", to: "ent_dayhoff_pam", label: "annotated using" }
+      ]
+    }
+  },
+  "m3-opentargets": {
+    note: "Module 3 used independently — graph built from Open Targets Platform queries for Type 2 Diabetes Mellitus. No Module 1 or Module 2 input.",
+    graph: {
+      meta: { version: 1, ingestedDatasets: ["Open Targets — Type 2 Diabetes"], lastUpdated: new Date().toISOString() },
+      nodes: {
+        "dat_t2d":           { id: "dat_t2d", name: "Open Targets — T2D query", type: "dataset", domain: "Endocrinology", fairScore: 0.95, description: "Standalone Module 3 ingest from Open Targets GraphQL" },
+        // Disease (concept root)
+        "con_t2d":           { id: "con_t2d", name: "Type 2 Diabetes Mellitus", type: "concept", domain: "Disease", fairScore: 0.92, description: "EFO_0001360" },
+        "con_obesity":       { id: "con_obesity", name: "Obesity", type: "concept", domain: "Disease", fairScore: 0.88, description: "EFO_0001073" },
+        "con_insulin_resist":{ id: "con_insulin_resist", name: "Insulin resistance", type: "concept", domain: "Disease", fairScore: 0.85, description: "EFO_0002614" },
+        "con_cvd":           { id: "con_cvd", name: "Cardiovascular disease", type: "concept", domain: "Disease", fairScore: 0.86, description: "EFO_0000319" },
+        // Targets (genes)
+        "ent_tcf7l2":        { id: "ent_tcf7l2", name: "TCF7L2", type: "entity", domain: "Genomics", fairScore: 0.94, description: "ENSG00000148737" },
+        "ent_kcnj11":        { id: "ent_kcnj11", name: "KCNJ11", type: "entity", domain: "Genomics", fairScore: 0.93, description: "ENSG00000187486" },
+        "ent_pparg":         { id: "ent_pparg", name: "PPARG", type: "entity", domain: "Genomics", fairScore: 0.94, description: "ENSG00000132170" },
+        "ent_slc30a8":       { id: "ent_slc30a8", name: "SLC30A8", type: "entity", domain: "Genomics", fairScore: 0.91, description: "ENSG00000164756" },
+        "ent_glp1r":         { id: "ent_glp1r", name: "GLP1R", type: "entity", domain: "Genomics", fairScore: 0.93, description: "ENSG00000112164" },
+        "ent_dpp4":          { id: "ent_dpp4", name: "DPP4", type: "entity", domain: "Genomics", fairScore: 0.92, description: "ENSG00000197635" },
+        // Drugs
+        "ent_metformin":     { id: "ent_metformin", name: "Metformin", type: "entity", domain: "Drug", fairScore: 0.96, description: "CHEMBL1431" },
+        "ent_pioglitazone":  { id: "ent_pioglitazone", name: "Pioglitazone", type: "entity", domain: "Drug", fairScore: 0.94, description: "CHEMBL595" },
+        "ent_sitagliptin":   { id: "ent_sitagliptin", name: "Sitagliptin", type: "entity", domain: "Drug", fairScore: 0.93, description: "CHEMBL1422" },
+        "ent_liraglutide":   { id: "ent_liraglutide", name: "Liraglutide", type: "entity", domain: "Drug", fairScore: 0.93, description: "CHEMBL414357" },
+        "ent_glyburide":     { id: "ent_glyburide", name: "Glyburide", type: "entity", domain: "Drug", fairScore: 0.91, description: "CHEMBL472" }
+      },
+      edges: [
+        // Dataset → entities (containment)
+        { from: "dat_t2d", to: "con_t2d", label: "contains" },
+        { from: "dat_t2d", to: "ent_tcf7l2", label: "contains" },
+        { from: "dat_t2d", to: "ent_kcnj11", label: "contains" },
+        { from: "dat_t2d", to: "ent_pparg", label: "contains" },
+        { from: "dat_t2d", to: "ent_metformin", label: "contains" },
+        // Genetic associations (genes → disease)
+        { from: "ent_tcf7l2", to: "con_t2d", label: "genetically associated with" },
+        { from: "ent_kcnj11", to: "con_t2d", label: "genetically associated with" },
+        { from: "ent_slc30a8", to: "con_t2d", label: "genetically associated with" },
+        { from: "ent_pparg", to: "con_t2d", label: "genetically associated with" },
+        // Drug-target relationships
+        { from: "ent_metformin", to: "ent_pparg", label: "modulates" },
+        { from: "ent_pioglitazone", to: "ent_pparg", label: "agonist of" },
+        { from: "ent_sitagliptin", to: "ent_dpp4", label: "inhibits" },
+        { from: "ent_liraglutide", to: "ent_glp1r", label: "agonist of" },
+        { from: "ent_glyburide", to: "ent_kcnj11", label: "inhibits" },
+        // Drug → disease (treatment)
+        { from: "ent_metformin", to: "con_t2d", label: "treats" },
+        { from: "ent_pioglitazone", to: "con_t2d", label: "treats" },
+        { from: "ent_sitagliptin", to: "con_t2d", label: "treats" },
+        { from: "ent_liraglutide", to: "con_t2d", label: "treats" },
+        { from: "ent_glyburide", to: "con_t2d", label: "treats" },
+        // Disease comorbidities
+        { from: "con_t2d", to: "con_obesity", label: "comorbid with" },
+        { from: "con_t2d", to: "con_insulin_resist", label: "characterized by" },
+        { from: "con_t2d", to: "con_cvd", label: "increases risk of" },
+        { from: "con_obesity", to: "con_insulin_resist", label: "drives" },
+        // Drug → comorbidity (mechanism)
+        { from: "ent_liraglutide", to: "con_obesity", label: "treats" },
+        { from: "ent_metformin", to: "con_insulin_resist", label: "improves" }
+      ]
+    }
+  }
+};
+
+let activeM3Scenario = "m3-pipeline";
+function currentGraph() { return SAMPLE_GRAPH_SCENARIOS[activeM3Scenario].graph; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   State
+   ───────────────────────────────────────────────────────────────────────── */
+let state = {
+  registry: SAMPLE_REGISTRY,
+  m2: currentM2(),
+  graph: currentGraph(),
+  isLive: false
+};
+let networkInstance = null;
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Render
+   ───────────────────────────────────────────────────────────────────────── */
+function fmtPct(n) { return Math.round(n * 100) + "%"; }
+function fmtNum(n) { return Number(n).toLocaleString("en-US"); }
+
+function fairBar(score, color) {
+  const pct = Math.round(score * 100);
+  return `<div class="bar"><i style="width:${pct}%;background:${color}"></i></div>`;
+}
+
+function renderOverview() {
+  const dbCount = Object.keys(state.registry).length;
+  const m2Count = state.m2.length;
+  const nodeCount = Object.keys(state.graph.nodes || {}).length;
+  const edgeCount = (state.graph.edges || []).length;
+
+  document.getElementById("ovDb").textContent    = dbCount;
+  document.getElementById("ovDs").textContent    = m2Count;
+  document.getElementById("ovNodes").textContent = nodeCount;
+  document.getElementById("ovEdges").textContent = edgeCount;
+
+  // FAIR distribution buckets — count databases falling in each pillar's average bucket
+  const buckets = { F: [], A: [], I: [], R: [] };
+  for (const db of Object.values(state.registry)) {
+    const f = db.fairScore || {};
+    buckets.F.push(f.findability?.score ?? 0);
+    buckets.A.push(f.accessibility?.score ?? 0);
+    buckets.I.push(f.interoperability?.score ?? 0);
+    buckets.R.push(f.reusability?.score ?? 0);
+  }
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  const html = `
+    <div class="pillars">
+      <span class="pname">Findability</span>${fairBar(avg(buckets.F), "var(--green)")}<span class="pval">${fmtPct(avg(buckets.F))}</span>
+      <span class="pname">Accessibility</span>${fairBar(avg(buckets.A), "var(--green)")}<span class="pval">${fmtPct(avg(buckets.A))}</span>
+      <span class="pname">Interoperab.</span>${fairBar(avg(buckets.I), "var(--blue)")}<span class="pval">${fmtPct(avg(buckets.I))}</span>
+      <span class="pname">Reusability</span>${fairBar(avg(buckets.R), "var(--green)")}<span class="pval">${fmtPct(avg(buckets.R))}</span>
+    </div>
+    <p style="margin-top:14px;font-size:12px;color:var(--muted);">
+      Across ${dbCount} legacy database${dbCount === 1 ? '' : 's'}.
+      Accessibility is the lowest pillar — consistent with "no API, no programmatic access" being the defining property of legacy databases.
+    </p>`;
+  document.getElementById("fairBuckets").innerHTML = html;
+
+  const status = [
+    ["Module 1", "Discovery", `${dbCount} legacy databases registered`, "var(--green)"],
+    ["Module 2", "Harmonization", `${m2Count} dataset${m2Count === 1 ? '' : 's'} harmonized`, "var(--blue)"],
+    ["Module 3", "Knowledge Graph", `${nodeCount} nodes · ${edgeCount} edges · v${state.graph.meta?.version ?? 1}`, "var(--amber)"]
+  ];
+  document.getElementById("pipelineStatus").innerHTML = status.map(([m, n, s, c]) => `
+    <tr>
+      <td><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${c};margin-right:8px;"></span><strong>${m}</strong></td>
+      <td><span class="badge">${n}</span></td>
+      <td>${s}</td>
+    </tr>`).join("");
+}
+
+function renderM1() {
+  const list = Object.entries(state.registry).map(([id, db]) => ({ id, ...db }));
+  list.sort((a, b) => (b.fairScore?.legacyScore ?? 0) - (a.fairScore?.legacyScore ?? 0));
+
+  document.getElementById("m1Total").textContent    = list.length;
+  document.getElementById("m1Approved").textContent = list.filter(d => d.approved).length;
+  const fairs = list.map(d => d.fairScore?.overallScore ?? 0).filter(n => n > 0);
+  document.getElementById("m1Fair").textContent     = fairs.length ? fmtPct(fairs.reduce((a,b)=>a+b,0)/fairs.length) : "—";
+  document.getElementById("m1Dead").textContent     = list.filter(d => d.urlAbandoned).length;
+
+  if (!list.length) {
+    document.getElementById("m1Rows").innerHTML =
+      `<tr><td colspan="5" class="empty"><div class="big">No databases yet</div>Load a registry.json to populate.</td></tr>`;
+    return;
+  }
+
+  document.getElementById("m1Rows").innerHTML = list.map(db => {
+    const fair = db.fairScore || {};
+    const fairOv = fair.overallScore ?? 0;
+    const legacy = fair.legacyScore ?? 0;
+    const pmids = (db.sourcePMIDs || []).slice(0, 3).join(", ");
+    return `
+      <tr>
+        <td>
+          <div class="name">${escapeHTML(db.name)} ${db.urlAbandoned ? '<span class="badge dead">Dead URL</span>' : ''}${db.approved ? '<span class="badge">Approved</span>' : ''}</div>
+          <div class="desc">${escapeHTML(db.description || '')}${db.yearOfDatabase ? ` <em>· est. ${escapeHTML(db.yearOfDatabase)}</em>` : ''}</div>
+        </td>
+        <td><span class="badge">${escapeHTML(db.domain || '—')}</span></td>
+        <td>${fmtPct(fairOv)}${fairBar(fairOv, "var(--green)")}</td>
+        <td>${fmtPct(legacy)}${fairBar(legacy, "var(--amber)")}</td>
+        <td><code style="font-size:11px;color:var(--muted)">${pmids || '—'}${(db.sourcePMIDs?.length || 0) > 3 ? ' …' : ''}</code></td>
+      </tr>`;
+  }).join("");
+}
+
+function renderM2() {
+  document.getElementById("m2Total").textContent    = state.m2.length;
+  const renamed = state.m2.reduce((a, d) => a + (d.renames?.length || 0), 0);
+  document.getElementById("m2Renamed").textContent  = renamed;
+  const fairs = state.m2.map(d => d.fair?.overall ?? 0);
+  document.getElementById("m2Fair").textContent     = fairs.length ? fmtPct(fairs.reduce((a,b)=>a+b,0)/fairs.length) : "—";
+  const unmapped = state.m2.reduce((a, d) => a + (d.unmapped?.length || 0), 0);
+  document.getElementById("m2Unmapped").textContent = unmapped;
+
+  if (!state.m2.length) {
+    document.getElementById("m2Rows").innerHTML =
+      `<tr><td colspan="5" class="empty"><div class="big">No harmonized datasets</div>Module 2 output is not yet loaded.</td></tr>`;
+    return;
+  }
+
+  document.getElementById("m2Rows").innerHTML = state.m2.map(d => `
+    <tr>
+      <td><div class="name">${escapeHTML(d.name)}</div><div class="desc">${escapeHTML(d.id)}</div></td>
+      <td><code style="font-size:11px;color:var(--muted)">${escapeHTML(d.sourceId || '—')}</code></td>
+      <td>${fmtNum(d.records)}</td>
+      <td>${fmtPct(d.fair.overall)}${fairBar(d.fair.overall, "var(--blue)")}<div class="desc" style="font-size:11px;margin-top:3px">F ${fmtPct(d.fair.findability)} · A ${fmtPct(d.fair.accessibility)} · <strong>I ${fmtPct(d.fair.interoperability)}</strong> · R ${fmtPct(d.fair.reusability)}</div></td>
+      <td>${(d.renames || []).map(r => `<div style="font-size:12px;margin-bottom:2px;"><code style="color:var(--muted)">${escapeHTML(r.from)}</code> → <code style="color:var(--blue)">${escapeHTML(r.to)}</code></div>`).join('') || '<span class="desc">none</span>'}${(d.unmapped?.length) ? `<div class="desc" style="margin-top:6px;color:#a55">unmapped: ${d.unmapped.map(escapeHTML).join(', ')}</div>` : ''}</td>
+    </tr>`).join("");
+}
+
+function renderM3() {
+  const nodes = Object.values(state.graph.nodes || {});
+  const edges = state.graph.edges || [];
+
+  document.getElementById("m3Nodes").textContent    = nodes.length;
+  document.getElementById("m3Edges").textContent    = edges.length;
+  document.getElementById("m3Datasets").textContent = (state.graph.meta?.ingestedDatasets || []).length;
+  document.getElementById("m3Version").textContent  = state.graph.meta?.version ?? 1;
+
+  // vis-network setup
+  const colorByType = {
+    dataset:   { background: "#b58b5b", border: "#8a6a45" },
+    entity:    { background: "#7AA078", border: "#5A8058" },
+    concept:   { background: "#5B7C99", border: "#3F5A75" },
+    attribute: { background: "#9C9C8C", border: "#7A7A6C" }
+  };
+
+  const visNodes = nodes.map(n => ({
+    id: n.id,
+    label: truncate(n.name, 22),
+    title: `${n.name}\n${n.type} · ${n.domain || ''}\nFAIR: ${fmtPct(n.fairScore || 0)}${n.description ? '\n' + n.description : ''}`,
+    color: colorByType[n.type] || colorByType.entity,
+    shape: n.type === "dataset" ? "box" : "dot",
+    size: n.type === "dataset" ? 18 : 14,
+    font: { color: n.type === "dataset" ? "#FFFFFF" : "#2A2F2D", face: "Inter Tight", size: 12 }
+  }));
+
+  const visEdges = edges.map((e, i) => ({
+    id: `e${i}`, from: e.from, to: e.to,
+    label: e.label, font: { size: 10, color: "#7A8280", strokeWidth: 0, align: "horizontal" },
+    color: { color: "#C9CDC8", highlight: "#5A6362" },
+    arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+    smooth: { type: "continuous" }
+  }));
+
+  if (networkInstance) networkInstance.destroy();
+  networkInstance = new vis.Network(
+    document.getElementById("graph"),
+    { nodes: new vis.DataSet(visNodes), edges: new vis.DataSet(visEdges) },
+    {
+      physics: { stabilization: { iterations: 200 }, barnesHut: { gravitationalConstant: -8000, springLength: 140 } },
+      interaction: { hover: true, tooltipDelay: 150 }
+    }
+  );
+}
+
+function renderAll() {
+  renderOverview();
+  renderM1();
+  renderM2();
+  // Module 3 only renders when its tab is active (vis-network needs visible container)
+  if (document.getElementById("m3").classList.contains("active")) renderM3();
+}
+
+function escapeHTML(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+function truncate(s, n) {
+  s = String(s || "");
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Tabs
+   ───────────────────────────────────────────────────────────────────────── */
+document.querySelectorAll("nav.tabs button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav.tabs button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    const target = btn.dataset.mod === "ov" ? "ov" : btn.dataset.mod;
+    document.getElementById(target).classList.add("active");
+    if (target === "m3") renderM3();
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Scenario switching (Module 2 + Module 3)
+   ───────────────────────────────────────────────────────────────────────── */
+function updateScenarioNotes() {
+  document.getElementById("m2Note").textContent = SAMPLE_M2_SCENARIOS[activeM2Scenario].note;
+  document.getElementById("m3Note").textContent = SAMPLE_GRAPH_SCENARIOS[activeM3Scenario].note;
+}
+
+document.querySelectorAll(".scenario-bar button.scenario").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const sc = btn.dataset.scenario;
+    // Toggle button-active state within its own bar
+    btn.parentElement.querySelectorAll("button.scenario").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+
+    if (sc.startsWith("m2-")) {
+      activeM2Scenario = sc;
+      state.m2 = currentM2();
+      renderM2();
+      renderOverview();
+    } else if (sc.startsWith("m3-")) {
+      activeM3Scenario = sc;
+      state.graph = currentGraph();
+      // Only re-draw graph if M3 panel is visible (vis-network needs visible container)
+      if (document.getElementById("m3").classList.contains("active")) renderM3();
+      renderOverview();
+    }
+    updateScenarioNotes();
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   File loaders
+   ───────────────────────────────────────────────────────────────────────── */
+function setLive(label) {
+  state.isLive = true;
+  document.getElementById("dataPill").classList.add("live");
+  document.getElementById("dataLabel").textContent = label;
+}
+
+document.getElementById("loadM1").addEventListener("change", async (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const json = JSON.parse(text);
+    state.registry = json;
+    setLive(`Live: registry (${file.name})`);
+    renderAll();
+  } catch (e) {
+    alert("Could not parse registry.json: " + e.message);
+  }
+});
+
+document.getElementById("loadM3").addEventListener("change", async (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const json = JSON.parse(text);
+    state.graph = json;
+    setLive(`Live: graph (${file.name})`);
+    renderAll();
+  } catch (e) {
+    alert("Could not parse graph.json: " + e.message);
+  }
+});
+
+document.getElementById("reset").addEventListener("click", () => {
+  state.registry = SAMPLE_REGISTRY;
+  activeM2Scenario = "m2-pipeline";
+  activeM3Scenario = "m3-pipeline";
+  state.m2       = currentM2();
+  state.graph    = currentGraph();
+  state.isLive   = false;
+  document.getElementById("dataPill").classList.remove("live");
+  document.getElementById("dataLabel").textContent = "Sample data loaded";
+  // Reset scenario buttons too
+  document.querySelectorAll(".scenario-bar button.scenario").forEach(b => {
+    b.classList.toggle("active", b.dataset.scenario === "m2-pipeline" || b.dataset.scenario === "m3-pipeline");
+  });
+  updateScenarioNotes();
+  renderAll();
+});
+
+/* Initial render */
+updateScenarioNotes();
+renderAll();
+</script>
+</body>
+</html>
